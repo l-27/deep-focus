@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Deep Focus</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #070707;
+      color: #f0f0f0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #app {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      text-align: center;
+    }
+
+    #start h1 {
+      font-size: clamp(2rem, 8vw, 3rem);
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      margin-bottom: 10px;
+    }
+
+    #start p {
+      color: #666;
+      font-size: 1rem;
+      max-width: 300px;
+      line-height: 1.5;
+      margin-bottom: 40px;
+    }
+
+    .btn {
+      background: #161616;
+      border: 1px solid #333;
+      color: #fff;
+      font-size: 1.15rem;
+      padding: 18px 48px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    .btn:active { background: #252525; }
+
+    #game { display: none; width: 100%; max-width: 440px; }
+
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      max-width: 360px;
+      margin-bottom: 40px;
+      font-size: 0.95rem;
+      color: #555;
+    }
+
+    .hud span { color: #aaa; font-variant-numeric: tabular-nums; }
+
+    #stimulus {
+      font-size: clamp(1.6rem, 7vw, 2.4rem);
+      font-weight: 600;
+      min-height: 2.8em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 36px;
+      letter-spacing: -0.02em;
+      transition: opacity 0.08s;
+    }
+
+    #stimulus.flash { opacity: 0.2; }
+
+    .choices {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      width: 100%;
+    }
+
+    .choice {
+      background: #121212;
+      border: 1px solid #2a2a2a;
+      color: #eee;
+      font-size: 1.2rem;
+      padding: 22px 12px;
+      border-radius: 16px;
+      cursor: pointer;
+      transition: all 0.1s;
+    }
+    .choice:active { background: #1e2a3a; border-color: #3a7bd5; }
+    .choice.correct { background: #1a2f1a; border-color: #3a8a3a; }
+    .choice.wrong { background: #2f1a1a; border-color: #8a3a3a; }
+
+    #feedback {
+      height: 28px;
+      margin-top: 24px;
+      font-size: 0.95rem;
+      color: #666;
+    }
+
+    #over {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    #over h2 {
+      font-size: 1.8rem;
+      margin-bottom: 8px;
+    }
+
+    #over p {
+      color: #777;
+      margin-bottom: 28px;
+    }
+
+    body.idle { cursor: none; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="start">
+      <h1>Deep Focus</h1>
+      <p>Fast, random decisions. Speed increases. Stay locked in.</p>
+      <button class="btn" id="go">Begin</button>
+    </div>
+
+    <div id="game">
+      <div class="hud">
+        <div>Score: <span id="score">0</span></div>
+        <div>Streak: <span id="streak">0</span></div>
+        <div>Level: <span id="level">1</span></div>
+      </div>
+      <div id="stimulus">—</div>
+      <div class="choices" id="choices"></div>
+      <div id="feedback"></div>
+    </div>
+
+    <div id="over">
+      <h2 id="final-score">0</h2>
+      <p>tasks completed</p>
+      <button class="btn" id="again">Go again</button>
+    </div>
+  </div>
+
+  <script>
+    const words = [
+      "ember","quill","moss","flint","haze","grove","pearl","cinder",
+      "willow","slate","fern","dusk","plume","ridge","silk","onyx",
+      "cedar","ivory","thistle","coral","maple","harbor","velvet","drizzle"
+    ];
+    const colors = ["crimson","teal","amber","indigo","olive","violet","scarlet","cyan","maroon","chartreuse"];
+    const animals = ["lynx","heron","stoat","ibis","marten","quokka","badger","toucan","axolotl","wombat"];
+    const shapes = ["circle","square","triangle","diamond","hexagon","oval"];
+    const numbers = () => Math.floor(Math.random()*90)+10;
+
+    let score = 0;
+    let streak = 0;
+    let level = 1;
+    let timeLimit = 3200; // ms
+    let timer = null;
+    let currentAnswer = null;
+    let locked = false;
+
+    const startEl = document.getElementById('start');
+    const gameEl = document.getElementById('game');
+    const overEl = document.getElementById('over');
+    const stim = document.getElementById('stimulus');
+    const choicesEl = document.getElementById('choices');
+    const scoreEl = document.getElementById('score');
+    const streakEl = document.getElementById('streak');
+    const levelEl = document.getElementById('level');
+    const feedback = document.getElementById('feedback');
+    const finalScore = document.getElementById('final-score');
+
+    function rand(arr) { return arr[Math.floor(Math.random()*arr.length)]; }
+    function shuffle(a) { return [...a].sort(() => Math.random()-0.5); }
+
+    function next() {
+      locked = false;
+      feedback.textContent = '';
+      clearTimeout(timer);
+
+      // Speed up every 8 correct
+      level = Math.floor(score / 8) + 1;
+      timeLimit = Math.max(1400, 3200 - (level-1)*180);
+      levelEl.textContent = level;
+
+      const type = rand(['word','color','animal','shape','number','longer','odd']);
+      let prompt = '';
+      let options = [];
+      let answer = null;
+
+      if (type === 'word') {
+        const a = rand(words);
+        let b = rand(words);
+        while (b === a) b = rand(words);
+        prompt = `Prefer: “${a}” or “${b}”?`;
+        options = [a, b];
+        answer = null; // no wrong answer
+      }
+      else if (type === 'color') {
+        const a = rand(colors);
+        let b = rand(colors);
+        while (b === a) b = rand(colors);
+        prompt = `Which color name?`;
+        options = [a, b];
+        answer = null;
+      }
+      else if (type === 'animal') {
+        const a = rand(animals);
+        let b = rand(animals);
+        while (b === a) b = rand(animals);
+        prompt = `Better climber?`;
+        options = [a, b];
+        answer = null;
+      }
+      else if (type === 'shape') {
+        const a = rand(shapes);
+        let b = rand(shapes);
+        while (b === a) b = rand(shapes);
+        prompt = `Pick a shape`;
+        options = [a, b];
+        answer = null;
+      }
+      else if (type === 'number') {
+        const n = numbers();
+        prompt = `Is ${n} odd or even?`;
+        options = ['Odd', 'Even'];
+        answer = n % 2 === 0 ? 'Even' : 'Odd';
+      }
+      else if (type === 'longer') {
+        let a = rand(words);
+        let b = rand(words);
+        while (b.length === a.length) b = rand(words);
+        prompt = `Which word is longer?`;
+        options = shuffle([a, b]);
+        answer = a.length > b.length ? a : b;
+      }
+      else if (type === 'odd') {
+        const base = rand(words);
+        let odd = rand(words);
+        while (odd === base) odd = rand(words);
+        options = shuffle([base, base, base, odd]);
+        prompt = `Which is different?`;
+        answer = odd;
+      }
+
+      currentAnswer = answer;
+      stim.textContent = prompt;
+      stim.classList.add('flash');
+      setTimeout(() => stim.classList.remove('flash'), 70);
+
+      choicesEl.innerHTML = '';
+      options.forEach(opt => {
+        const btn = document.createElement('button');
+        btn.className = 'choice';
+        btn.textContent = opt;
+        btn.onclick = () => select(opt, btn);
+        choicesEl.appendChild(btn);
+      });
+
+      // Timeout only if there is a correct answer
+      if (answer !== null) {
+        timer = setTimeout(() => {
+          if (!locked) {
+            locked = true;
+            streak = 0;
+            streakEl.textContent = streak;
+            feedback.textContent = 'Too slow';
+            setTimeout(next, 600);
+          }
+        }, timeLimit);
+      }
+    }
+
+    function select(chosen, btn) {
+      if (locked) return;
+      locked = true;
+      clearTimeout(timer);
+
+      if (currentAnswer === null) {
+        // Preference – always correct
+        score++;
+        streak++;
+        btn.classList.add('correct');
+      } else if (chosen === currentAnswer) {
+        score++;
+        streak++;
+        btn.classList.add('correct');
+        feedback.textContent = 'Correct';
+      } else {
+        streak = 0;
+        btn.classList.add('wrong');
+        feedback.textContent = 'Wrong';
+      }
+
+      scoreEl.textContent = score;
+      streakEl.textContent = streak;
+
+      setTimeout(next, 380);
+    }
+
+    function begin() {
+      document.documentElement.requestFullscreen?.().catch(() => {});
+      score = 0;
+      streak = 0;
+      level = 1;
+      scoreEl.textContent = 0;
+      streakEl.textContent = 0;
+      levelEl.textContent = 1;
+      startEl.style.display = 'none';
+      overEl.style.display = 'none';
+      gameEl.style.display = 'block';
+      next();
+    }
+
+    document.getElementById('go').onclick = begin;
+    document.getElementById('again').onclick = begin;
+
+    // Soft cursor
+    let idle;
+    function resetIdle() {
+      document.body.classList.remove('idle');
+      clearTimeout(idle);
+      idle = setTimeout(() => document.body.classList.add('idle'), 2800);
+    }
+    document.addEventListener('mousemove', resetIdle);
+    document.addEventListener('click', resetIdle);
+  </script>
+</body>
+</html>
